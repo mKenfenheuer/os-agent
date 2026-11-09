@@ -15,6 +15,7 @@ import (
 	"github.com/home-assistant/os-agent/config/swap"
 	"github.com/home-assistant/os-agent/config/timesyncd"
 	"github.com/home-assistant/os-agent/datadisk"
+	"github.com/home-assistant/os-agent/gpu"
 	"github.com/home-assistant/os-agent/system"
 	logging "github.com/home-assistant/os-agent/utils/log"
 )
@@ -69,6 +70,7 @@ func main() {
 	logging.Info.Printf("Listening on service %s ...", busName)
 	datadisk.InitializeDBus(conn)
 	system.InitializeDBus(conn)
+	gpu.InitializeDBus(conn)
 	apparmor.InitializeDBus(conn)
 	cgroup.InitializeDBus(conn)
 	boards.InitializeDBus(conn, board)
