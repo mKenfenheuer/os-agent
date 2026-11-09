@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -46,15 +47,20 @@ func addCard(t *testing.T, sysRoot, card, deviceName, driver string, files map[s
 	return devicePath
 }
 
-func newTestCollector(t *testing.T, nvidiaOutput string, nvidiaErr error) collector {
+func newTestCollector(t *testing.T, nvidiaOutput string, nvidiaErr error) *collector {
 	t.Helper()
 	root := t.TempDir()
-	c := collector{
+	c := &collector{
 		sysRoot:  filepath.Join(root, "sys"),
 		procRoot: filepath.Join(root, "proc"),
 		nvidiaSMI: func(context.Context) ([]byte, error) {
 			return []byte(nvidiaOutput), nvidiaErr
 		},
+		perfOpen: func(uint32, int, uint64) (perfCounter, error) {
+			return nil, errors.New("no perf in tests")
+		},
+		now:   time.Now,
+		sleep: func(time.Duration) {},
 	}
 	writeFile(t, filepath.Join(c.procRoot, "sys", "kernel", "osrelease"), "6.18.60-haos\n")
 	return c
@@ -63,15 +69,15 @@ func newTestCollector(t *testing.T, nvidiaOutput string, nvidiaErr error) collec
 func TestAMDDevice(t *testing.T) {
 	c := newTestCollector(t, "", nil)
 	addCard(t, c.sysRoot, "card1", "0000:03:00.0", "amdgpu", map[string]string{
-		"vendor":                         "0x1002\n",
-		"device":                         "0x744c\n",
-		"gpu_busy_percent":               "42\n",
-		"mem_info_vram_used":             "1073741824\n",
-		"mem_info_vram_total":            "25753026560\n",
-		"hwmon/hwmon3/temp1_input":       "51000\n",
-		"hwmon/hwmon3/power1_input":      "35000000\n",
-		"hwmon/hwmon3/temp2_input":       "60000\n",
-		"product_name":                   "\n",
+		"vendor":                    "0x1002\n",
+		"device":                    "0x744c\n",
+		"gpu_busy_percent":          "42\n",
+		"mem_info_vram_used":        "1073741824\n",
+		"mem_info_vram_total":       "25753026560\n",
+		"hwmon/hwmon3/temp1_input":  "51000\n",
+		"hwmon/hwmon3/power1_input": "35000000\n",
+		"hwmon/hwmon3/temp2_input":  "60000\n",
+		"product_name":              "\n",
 	})
 	// Connectors are no cards
 	writeFile(t, filepath.Join(c.sysRoot, "class", "drm", "card1-DP-1", "status"), "connected\n")

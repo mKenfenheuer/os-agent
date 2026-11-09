@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	logging "github.com/home-assistant/os-agent/utils/log"
@@ -59,12 +60,22 @@ type collector struct {
 	sysRoot   string
 	procRoot  string
 	nvidiaSMI func(ctx context.Context) ([]byte, error)
+	perfOpen  perfOpenFunc
+	now       func() time.Time
+	sleep     func(time.Duration)
+
+	// Open busy counters of i915 devices by PCI address
+	mu   sync.Mutex
+	i915 map[string]*i915Counters
 }
 
-func newCollector() collector {
-	return collector{
+func newCollector() *collector {
+	return &collector{
 		sysRoot:  "/sys",
 		procRoot: "/proc",
+		perfOpen: openPerfEvent,
+		now:      time.Now,
+		sleep:    time.Sleep,
 		nvidiaSMI: func(ctx context.Context) ([]byte, error) {
 			path, err := exec.LookPath("nvidia-smi")
 			if err != nil {
@@ -77,14 +88,14 @@ func newCollector() collector {
 	}
 }
 
-func (c collector) devices() []Device {
+func (c *collector) devices() []Device {
 	devices := c.nvidiaDevices()
 	devices = append(devices, c.drmDevices()...)
 	return devices
 }
 
 // nvidiaDevices queries NVML through nvidia-smi.
-func (c collector) nvidiaDevices() []Device {
+func (c *collector) nvidiaDevices() []Device {
 	if _, err := os.Stat(filepath.Join(c.procRoot, "driver", "nvidia", "version")); err != nil {
 		return nil
 	}
@@ -154,13 +165,14 @@ func normalizePCIAddress(address string) string {
 
 // drmDevices reads GPUs from DRM in sysfs. NVIDIA GPUs are left out, they
 // are covered by NVML.
-func (c collector) drmDevices() []Device {
+func (c *collector) drmDevices() []Device {
 	cards, err := os.ReadDir(filepath.Join(c.sysRoot, "class", "drm"))
 	if err != nil {
 		return nil
 	}
 
 	var devices []Device
+	var i915Devices []string
 	for _, card := range cards {
 		if !cardRegexp.MatchString(card.Name()) {
 			continue
@@ -169,12 +181,16 @@ func (c collector) drmDevices() []Device {
 		device, ok := c.drmDevice(devicePath)
 		if ok {
 			devices = append(devices, device)
+			if device.Driver == "i915" {
+				i915Devices = append(i915Devices, device.Address)
+			}
 		}
 	}
+	c.pruneI915(i915Devices)
 	return devices
 }
 
-func (c collector) drmDevice(devicePath string) (Device, bool) {
+func (c *collector) drmDevice(devicePath string) (Device, bool) {
 	driverPath, err := filepath.EvalSymlinks(filepath.Join(devicePath, "driver"))
 	if err != nil {
 		return Device{}, false
@@ -211,6 +227,15 @@ func (c collector) drmDevice(devicePath string) (Device, bool) {
 		device.MemoryTotal = parseUint(readString(filepath.Join(devicePath, "mem_info_vram_total")))
 	}
 
+	if vendor == vendorIntel {
+		switch driver {
+		case "i915":
+			device.Utilization = c.i915Utilization(device.Address)
+		case "xe":
+			device.Utilization = c.xeUtilization(devicePath, device.Address)
+		}
+	}
+
 	if hwmon := firstHwmon(devicePath); hwmon != "" {
 		// millidegree Celsius
 		device.Temperature = parseFloat(readString(filepath.Join(hwmon, "temp1_input")), 0.001)
@@ -226,7 +251,7 @@ func (c collector) drmDevice(devicePath string) (Device, bool) {
 	return device, true
 }
 
-func (c collector) driverVersion(driver string) string {
+func (c *collector) driverVersion(driver string) string {
 	// Out-of-tree drivers report their own version
 	if version := readString(filepath.Join(c.sysRoot, "module", strings.ReplaceAll(driver, "-", "_"), "version")); version != "" {
 		return version
@@ -234,7 +259,7 @@ func (c collector) driverVersion(driver string) string {
 	return readString(filepath.Join(c.procRoot, "sys", "kernel", "osrelease"))
 }
 
-func (c collector) deviceName(devicePath, vendor, vendorID string) string {
+func (c *collector) deviceName(devicePath, vendor, vendorID string) string {
 	if name := readString(filepath.Join(devicePath, "product_name")); name != "" {
 		return name
 	}

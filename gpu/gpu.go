@@ -57,7 +57,7 @@ func (d Device) toDBus() map[string]dbus.Variant {
 }
 
 type gpu struct {
-	collector collector
+	collector *collector
 }
 
 // GetDevices returns all GPUs with their current statistics.
