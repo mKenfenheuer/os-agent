@@ -71,6 +71,7 @@ func TestAMDDevice(t *testing.T) {
 	addCard(t, c.sysRoot, "card1", "0000:03:00.0", "amdgpu", map[string]string{
 		"vendor":                    "0x1002\n",
 		"device":                    "0x744c\n",
+		"revision":                  "0xc8\n",
 		"gpu_busy_percent":          "42\n",
 		"mem_info_vram_used":        "1073741824\n",
 		"mem_info_vram_total":       "25753026560\n",
@@ -91,7 +92,7 @@ func TestAMDDevice(t *testing.T) {
 	if d.Address != "0000:03:00.0" || d.Vendor != vendorAMD || d.Driver != "amdgpu" {
 		t.Errorf("unexpected device: %+v", d)
 	}
-	if d.Name != "AMD GPU [1002:744c]" {
+	if d.Name != "AMD Radeon RX 7900 XTX" {
 		t.Errorf("unexpected name %q", d.Name)
 	}
 	if d.DriverVersion != "6.18.60-haos" {
@@ -211,5 +212,31 @@ func TestNormalizePCIAddress(t *testing.T) {
 		if got := normalizePCIAddress(input); got != want {
 			t.Errorf("normalizePCIAddress(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestAMDGPUName(t *testing.T) {
+	for _, tt := range []struct {
+		name, device, revision, subVendor, subDevice, want string
+	}{
+		{"device and revision", "0x73bf", "0xc0", "0x1eae", "0x6901", "AMD Radeon RX 6900 XT"},
+		{"other revision", "0x73bf", "0xc1", "0x1002", "0x0e3a", "AMD Radeon RX 6800 XT"},
+		{"unknown", "0xffff", "0x00", "0x0000", "0x0000", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := amdgpuName(tt.device, tt.revision, tt.subVendor, tt.subDevice); got != tt.want {
+				t.Errorf("amdgpuName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAMDGPUIDsSubsystem(t *testing.T) {
+	names, subsystem := parseAMDGPUIDs("# comment\n\n1.0.0\n1234,\tC1,\tAMD Radeon Test\n\t1043,\t8877,\tASUS Radeon Test\n")
+	if names[amdgpuID{"1234", "C1"}] != "AMD Radeon Test" {
+		t.Errorf("unexpected names: %v", names)
+	}
+	if subsystem[amdgpuSubsystem{amdgpuID{"1234", "C1"}, "1043", "8877"}] != "ASUS Radeon Test" {
+		t.Errorf("unexpected subsystem names: %v", subsystem)
 	}
 }

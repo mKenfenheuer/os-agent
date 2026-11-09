@@ -263,6 +263,16 @@ func (c *collector) deviceName(devicePath, vendor, vendorID string) string {
 	if name := readString(filepath.Join(devicePath, "product_name")); name != "" {
 		return name
 	}
+	if vendor == vendorAMD {
+		if name := amdgpuName(
+			readString(filepath.Join(devicePath, "device")),
+			readString(filepath.Join(devicePath, "revision")),
+			readString(filepath.Join(devicePath, "subsystem_vendor")),
+			readString(filepath.Join(devicePath, "subsystem_device")),
+		); name != "" {
+			return name
+		}
+	}
 	if vendorID != "" {
 		deviceID := strings.TrimPrefix(readString(filepath.Join(devicePath, "device")), "0x")
 		prefix := vendorNames[vendor]
