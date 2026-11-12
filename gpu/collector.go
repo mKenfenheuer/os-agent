@@ -60,6 +60,12 @@ type collector struct {
 	sysRoot   string
 	procRoot  string
 	nvidiaSMI func(ctx context.Context) ([]byte, error)
+	// Compute processes: GPU address, PID and memory in MiB
+	nvidiaSMIApps func(ctx context.Context) ([]byte, error)
+	// Utilization per process of the last second, by GPU index
+	nvidiaPmon func(ctx context.Context) ([]byte, error)
+	// GPU index and address, to match the output of nvidiaPmon
+	nvidiaSMIIndex func(ctx context.Context) ([]byte, error)
 	perfOpen  perfOpenFunc
 	now       func() time.Time
 	sleep     func(time.Duration)
@@ -85,7 +91,25 @@ func newCollector() *collector {
 				"--query-gpu=pci.bus_id,name,driver_version,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
 				"--format=csv,noheader,nounits").Output()
 		},
+		nvidiaSMIApps: func(ctx context.Context) ([]byte, error) {
+			return runNvidiaSMI(ctx, "--query-compute-apps=gpu_bus_id,pid,used_memory",
+				"--format=csv,noheader,nounits")
+		},
+		nvidiaPmon: func(ctx context.Context) ([]byte, error) {
+			return runNvidiaSMI(ctx, "pmon", "--count", "1", "--select", "u")
+		},
+		nvidiaSMIIndex: func(ctx context.Context) ([]byte, error) {
+			return runNvidiaSMI(ctx, "--query-gpu=index,pci.bus_id", "--format=csv,noheader")
+		},
 	}
+}
+
+func runNvidiaSMI(ctx context.Context, args ...string) ([]byte, error) {
+	path, err := exec.LookPath("nvidia-smi")
+	if err != nil {
+		return nil, nil //nolint:nilerr // no NVIDIA driver installed
+	}
+	return exec.CommandContext(ctx, path, args...).Output() //nolint:gosec
 }
 
 func (c *collector) devices() []Device {

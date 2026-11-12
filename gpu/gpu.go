@@ -71,6 +71,18 @@ func (g gpu) GetDevices() ([]map[string]dbus.Variant, *dbus.Error) {
 	return result, nil
 }
 
+// GetContainerUsage returns the GPU usage of the processes in Docker
+// containers, per container and GPU.
+func (g gpu) GetContainerUsage() ([]map[string]dbus.Variant, *dbus.Error) {
+	usage := g.collector.containerUsage()
+
+	result := make([]map[string]dbus.Variant, 0, len(usage))
+	for _, u := range usage {
+		result = append(result, u.toDBus())
+	}
+	return result, nil
+}
+
 func InitializeDBus(conn *dbus.Conn) {
 	g := gpu{collector: newCollector()}
 
