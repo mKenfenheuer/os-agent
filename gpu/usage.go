@@ -170,7 +170,10 @@ type nvidiaPID struct {
 }
 
 // nvidiaUtilization returns the SM utilization per GPU and process of the
-// last second. GPUs without these samples (e.g. older GeForce) report "-".
+// last second. A process without a sample in that second reports "-". This
+// means idle if the GPU reports samples for other processes or is idle as a
+// whole. GPUs without per-process samples (e.g. older GeForce) report "-"
+// for every process.
 func (c *collector) nvidiaUtilization(ctx context.Context) map[nvidiaPID]float64 {
 	if c.nvidiaPmon == nil || c.nvidiaSMIIndex == nil {
 		return nil
@@ -180,15 +183,25 @@ func (c *collector) nvidiaUtilization(ctx context.Context) map[nvidiaPID]float64
 		return nil
 	}
 	addresses := map[string]string{}
+	// GPUs where "-" means idle
+	sampled := map[string]bool{}
 	reader := csv.NewReader(strings.NewReader(string(indexOutput)))
 	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
 	records, err := reader.ReadAll()
 	if err != nil {
 		return nil
 	}
 	for _, record := range records {
-		if len(record) == 2 {
-			addresses[strings.TrimSpace(record[0])] = normalizePCIAddress(record[1])
+		if len(record) < 2 {
+			continue
+		}
+		address := normalizePCIAddress(record[1])
+		addresses[strings.TrimSpace(record[0])] = address
+		if len(record) > 2 {
+			if value := parseFloat(record[2], 1); value != nil && *value == 0 {
+				sampled[address] = true
+			}
 		}
 	}
 
@@ -197,6 +210,7 @@ func (c *collector) nvidiaUtilization(ctx context.Context) map[nvidiaPID]float64
 		return nil
 	}
 	result := map[nvidiaPID]float64{}
+	var idle []nvidiaPID
 	for _, line := range strings.Split(string(output), "\n") {
 		// gpu pid type sm mem enc dec ... command
 		fields := strings.Fields(line)
@@ -211,8 +225,17 @@ func (c *collector) nvidiaUtilization(ctx context.Context) map[nvidiaPID]float64
 		if err != nil {
 			continue
 		}
+		key := nvidiaPID{address, pid}
 		if sm := parseFloat(fields[3], 1); sm != nil {
-			result[nvidiaPID{address, pid}] = *sm
+			result[key] = *sm
+			sampled[address] = true
+		} else if fields[3] == "-" {
+			idle = append(idle, key)
+		}
+	}
+	for _, key := range idle {
+		if sampled[key.address] {
+			result[key] = 0
 		}
 	}
 	return result

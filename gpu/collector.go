@@ -64,11 +64,11 @@ type collector struct {
 	nvidiaSMIApps func(ctx context.Context) ([]byte, error)
 	// Utilization per process of the last second, by GPU index
 	nvidiaPmon func(ctx context.Context) ([]byte, error)
-	// GPU index and address, to match the output of nvidiaPmon
+	// GPU index, address and utilization, to match the output of nvidiaPmon
 	nvidiaSMIIndex func(ctx context.Context) ([]byte, error)
-	perfOpen  perfOpenFunc
-	now       func() time.Time
-	sleep     func(time.Duration)
+	perfOpen       perfOpenFunc
+	now            func() time.Time
+	sleep          func(time.Duration)
 
 	// Open busy counters of i915 devices by PCI address
 	mu   sync.Mutex
@@ -99,7 +99,7 @@ func newCollector() *collector {
 			return runNvidiaSMI(ctx, "pmon", "--count", "1", "--select", "u")
 		},
 		nvidiaSMIIndex: func(ctx context.Context) ([]byte, error) {
-			return runNvidiaSMI(ctx, "--query-gpu=index,pci.bus_id", "--format=csv,noheader")
+			return runNvidiaSMI(ctx, "--query-gpu=index,pci.bus_id,utilization.gpu", "--format=csv,noheader,nounits")
 		},
 	}
 }

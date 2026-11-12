@@ -132,7 +132,7 @@ func TestContainerUsageNVIDIA(t *testing.T) {
 			"00000000:01:00.0, 12486, [N/A]\n"), nil
 	}
 	c.nvidiaSMIIndex = func(context.Context) ([]byte, error) {
-		return []byte("0, 00000000:01:00.0\n"), nil
+		return []byte("0, 00000000:01:00.0, 42\n"), nil
 	}
 	c.nvidiaPmon = func(context.Context) ([]byte, error) {
 		return []byte("# gpu         pid   type     sm    mem    enc    dec    jpg    ofa    command \n" +
@@ -168,9 +168,9 @@ func TestContainerUsageNVIDIAWithoutSamples(t *testing.T) {
 		return []byte("00000000:01:00.0, 12025, 2294\n"), nil
 	}
 	c.nvidiaSMIIndex = func(context.Context) ([]byte, error) {
-		return []byte("0, 00000000:01:00.0\n"), nil
+		return []byte("0, 00000000:01:00.0, 42\n"), nil
 	}
-	// GPUs without per-process samples report "-"
+	// GPUs without per-process samples report "-", although the GPU is busy
 	c.nvidiaPmon = func(context.Context) ([]byte, error) {
 		return []byte("    0      12025     C      -      -      -      -      -      -    llama-server\n"), nil
 	}
@@ -185,6 +185,37 @@ func TestContainerUsageNVIDIAWithoutSamples(t *testing.T) {
 	}
 	if _, ok := u.toDBus()["Utilization"]; ok {
 		t.Error("unknown utilization must be left out on D-Bus")
+	}
+}
+
+func TestContainerUsageNVIDIAIdle(t *testing.T) {
+	for name, tc := range map[string]struct {
+		gpuUtilization string
+		pmon           string
+	}{
+		// another process has a sample, so "-" means no work in the last second
+		"other process sampled": {"5", "    0       5884     C      -      -      -      -      -      -    whisper-server \n" +
+			"    0      18664     C      5      0      -      -      -      -    llama-server   \n"},
+		// no process has a sample, but the whole GPU is idle
+		"idle GPU": {"0", "    0       5884     C      -      -      -      -      -      -    whisper-server \n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestCollector(t, "", nil)
+			writeFile(t, filepath.Join(c.procRoot, "driver", "nvidia", "version"), "NVRM version: 580.196.07\n")
+			c.nvidiaSMIApps = func(context.Context) ([]byte, error) {
+				return []byte("00000000:01:00.0, 5884, 910\n"), nil
+			}
+			c.nvidiaSMIIndex = func(context.Context) ([]byte, error) {
+				return []byte("0, 00000000:01:00.0, " + tc.gpuUtilization + "\n"), nil
+			}
+			c.nvidiaPmon = func(context.Context) ([]byte, error) { return []byte(tc.pmon), nil }
+			writeFile(t, filepath.Join(c.procRoot, "5884", "cgroup"), dockerCgroup(containerA))
+
+			u := findUsage(c.containerUsage(), containerA, "0000:01:00.0")
+			if u == nil || u.Utilization == nil || *u.Utilization != 0 {
+				t.Fatalf("expected idle container, got %+v", u)
+			}
+		})
 	}
 }
 
